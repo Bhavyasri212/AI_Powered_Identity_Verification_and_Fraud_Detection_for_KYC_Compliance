@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   CheckCircle,
@@ -16,13 +16,27 @@ import {
 import AnimatedBackground from "../components/AnimatedBackground";
 import Navbar from "../components/Navbar";
 
+// Import Recharts components
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  LineChart,
+  Line,
+} from "recharts";
+
 const API_BASE = "http://localhost:5000/api";
 
 export default function AdminPanel() {
   const [kycRequests, setKycRequests] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [selectedRequest, setSelectedRequest] = useState(null);
 
   const token = localStorage.getItem("token");
 
@@ -55,7 +69,7 @@ export default function AdminPanel() {
 
       setKycRequests((prev) =>
         prev.map((req) =>
-          req._id === id
+          (req._id || req.id) === id
             ? {
                 ...req,
                 status:
@@ -70,7 +84,8 @@ export default function AdminPanel() {
             : req
         )
       );
-    } catch {
+    } catch (err) {
+      console.error("Action error:", err);
       setError("Failed to update status");
     }
   };
@@ -232,6 +247,60 @@ export default function AdminPanel() {
     );
   };
 
+  // ========== CHART DATA PREPARATION ==========
+
+  const chartData = useMemo(() => {
+    // 1. KYC Status Distribution (Pie)
+    const statusCounts = {};
+    kycRequests.forEach((req) => {
+      const status = req.status || "unknown";
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+    });
+    const kycStatusData = Object.entries(statusCounts).map(([name, value]) => ({
+      name,
+      value,
+    }));
+
+    // 2. Fraud Score Ranges (Bar)
+    const fraudRanges = [
+      { range: "0-30", count: 0 },
+      { range: "31-70", count: 0 },
+      { range: "71-100", count: 0 },
+    ];
+    kycRequests.forEach((req) => {
+      req.fraudInfo?.forEach(({ fraudScore }) => {
+        if (fraudScore <= 30) fraudRanges[0].count++;
+        else if (fraudScore <= 70) fraudRanges[1].count++;
+        else fraudRanges[2].count++;
+      });
+    });
+
+    // 3. Requests Over Time (Line)
+    const dateCounts = {};
+    kycRequests.forEach((req) => {
+      if (!req.createdAt) return;
+      const d = new Date(req.createdAt).toLocaleDateString();
+      dateCounts[d] = (dateCounts[d] || 0) + 1;
+    });
+    const timeSeries = Object.entries(dateCounts)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    return {
+      kycStatusData,
+      fraudRanges,
+      timeSeries,
+    };
+  }, [kycRequests]);
+
+  const STATUS_COLORS = {
+    approved: "#22c55e",
+    rejected: "#ef4444",
+    pending: "#facc15",
+    manual_review: "#fbbf24",
+    unknown: "#94a3b8",
+  };
+
   return (
     <div className="relative min-h-screen bg-black">
       <AnimatedBackground />
@@ -265,7 +334,75 @@ export default function AdminPanel() {
           </motion.div>
         )}
 
-        {/* KYC Requests */}
+        {/* Charts Section */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+          {/* Pie Chart: KYC Status Distribution */}
+          <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
+            <h3 className="text-lg text-amber-400 font-semibold mb-4">
+              KYC Status Distribution
+            </h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <PieChart>
+                <Pie
+                  data={chartData.kycStatusData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  label={({ name, percent }) =>
+                    `${name} (${(percent * 100).toFixed(0)}%)`
+                  }
+                >
+                  {chartData.kycStatusData.map((entry, idx) => (
+                    <Cell
+                      key={`cell-${idx}`}
+                      fill={STATUS_COLORS[entry.name] || "#8884d8"}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Bar Chart: Fraud Score Ranges */}
+          <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
+            <h3 className="text-lg text-amber-400 font-semibold mb-4">
+              Fraud Score Distribution
+            </h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={chartData.fraudRanges}>
+                <XAxis dataKey="range" stroke="#94a3b8" />
+                <YAxis stroke="#94a3b8" />
+                <Tooltip />
+                <Bar dataKey="count" fill="#facc15" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Line Chart: Requests over time */}
+          <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 md:col-span-2">
+            <h3 className="text-lg text-amber-400 font-semibold mb-4">
+              KYC Requests Over Time
+            </h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={chartData.timeSeries}>
+                <XAxis dataKey="date" stroke="#94a3b8" />
+                <YAxis stroke="#94a3b8" />
+                <Tooltip />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* KYC Requests List */}
         <div className="space-y-6">
           {loading ? (
             <div className="text-center py-12">
@@ -287,7 +424,7 @@ export default function AdminPanel() {
                 className="bg-slate-900/60 backdrop-blur-2xl border border-slate-800 rounded-2xl p-6 hover:border-amber-400/30 transition-all duration-300"
               >
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                  {/* User Information */}
+                  {/* User Info */}
                   <div>
                     <h3 className="text-lg font-semibold text-amber-400 mb-3">
                       User Information
@@ -337,23 +474,27 @@ export default function AdminPanel() {
                       {req.status === "pending" ? (
                         <div className="space-y-2">
                           <button
-                            onClick={() => handleAction(req._id, "approve")}
+                            onClick={() =>
+                              handleAction(req._id || req.id, "approve")
+                            }
                             className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center transition-colors"
                           >
                             <ShieldCheck className="w-4 h-4 mr-2" />
                             Approve
                           </button>
                           <button
-                            onClick={() => handleAction(req._id, "reject")}
+                            onClick={() =>
+                              handleAction(req._id || req.id, "reject")
+                            }
                             className="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center justify-center transition-colors"
                           >
                             <ShieldX className="w-4 h-4 mr-2" />
                             Reject
                           </button>
-
-                          {/* ✅ NEW BUTTON */}
                           <button
-                            onClick={() => handleAction(req._id, "flag-review")}
+                            onClick={() =>
+                              handleAction(req._id || req.id, "flag-review")
+                            }
                             className="w-full px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg flex items-center justify-center transition-colors"
                           >
                             <AlertCircle className="w-4 h-4 mr-2" />

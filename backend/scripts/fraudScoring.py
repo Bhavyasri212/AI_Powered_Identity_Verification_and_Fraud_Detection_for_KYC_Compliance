@@ -109,7 +109,7 @@ def compute_name_similarity(name_from_doc, name_from_user):
 class DocumentGNN(torch.nn.Module):
     def __init__(self):
         super(DocumentGNN, self).__init__()
-        self.conv1 = GCNConv(3, 16)
+        self.conv1 = GCNConv(8, 16)
         self.conv2 = GCNConv(16, 32)
         self.fc = torch.nn.Linear(32, 2)
 
@@ -136,7 +136,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/scripts
 AI_DIR = os.path.abspath(os.path.join(BASE_DIR, '..', 'ai'))
 MODEL_PATH = os.path.join(AI_DIR, 'trained_gnn_model.pth')
 
-model = DocumentGNN()
+model = DocumentGNN(in_feats=8)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device('cpu')))
 model.eval()
 
@@ -153,9 +153,12 @@ def build_graph_from_document(data):
     # Features: [field_presence, normalized_length, dummy_feature]
     def feat(val):
         if val:
-            return [1.0, min(len(str(val)) / 50.0, 1.0), 0.5]
+            length = min(len(str(val)) / 50.0, 1.0)
+            # Example extra dummy features
+            return [1.0, length, 0.5, 0.1, 0.2, 0.3, 0.4, 0.6]
         else:
-            return [0.0, 0.0, 0.0]
+            return [0.0]*8
+
 
     features = [
         feat(data.get("name_on_doc", None)),
@@ -242,6 +245,44 @@ def calculate_fraud_score(data, doc_type, image_path):
         "reasons": reasons
     }
 
+def evaluate_tampering_accuracy(test_data):
+    """
+    test_data: list of dicts like [{ "image_path": "path", "tampered": true }, ...]
+    """
+    correct = 0
+    total = len(test_data)
+    for item in test_data:
+        path = item.get("image_path")
+        expected = item.get("tampered")
+        if path is None or expected is None:
+            continue
+        predicted = detect_document_tampering(path)
+        if predicted == expected:
+            correct += 1
+    accuracy = correct / total if total > 0 else 0.0
+    print(f"📄 Tampering Detection Accuracy: {accuracy * 100:.2f}% ({correct}/{total})")
+    return accuracy
+
+
+def evaluate_name_matching_accuracy(test_data, threshold=0.9):
+    """
+    test_data: list of dicts like [{ "doc_name": "...", "input_name": "...", "match": true }, ...]
+    """
+    correct = 0
+    total = len(test_data)
+    for item in test_data:
+        doc_name = item.get("doc_name")
+        input_name = item.get("input_name")
+        expected = item.get("match")
+        if doc_name is None or input_name is None or expected is None:
+            continue
+        similarity = compute_name_similarity(doc_name, input_name)
+        predicted = similarity >= threshold
+        if predicted == expected:
+            correct += 1
+    accuracy = correct / total if total > 0 else 0.0
+    print(f"🧠 Name Matching Accuracy: {accuracy * 100:.2f}% ({correct}/{total})")
+    return accuracy
 
 # ------------------------
 # Main Entry Point
@@ -249,12 +290,25 @@ def calculate_fraud_score(data, doc_type, image_path):
 
 if __name__ == "__main__":
     base64_input = sys.argv[1]
+    image_path = sys.argv[2]
     json_str = base64.b64decode(base64_input).decode('utf-8')
     input_data = json.loads(json_str)
-    image_path = sys.argv[2]
     doc_type = input_data.get('type')
 
     input_data["has_tampering_signs"] = detect_document_tampering(image_path)
 
     result = calculate_fraud_score(input_data, doc_type, image_path)
     print(json.dumps(result, indent=2))
+
+    # Optional evaluation files
+    if len(sys.argv) > 3:
+        for arg in sys.argv[3:]:
+            if arg.endswith("tampering_test.json"):
+                with open(arg, "r") as f:
+                    tampering_test_data = json.load(f)
+                evaluate_tampering_accuracy(tampering_test_data)
+
+            elif arg.endswith("name_test.json"):
+                with open(arg, "r") as f:
+                    name_test_data = json.load(f)
+                evaluate_name_matching_accuracy(name_test_data)
