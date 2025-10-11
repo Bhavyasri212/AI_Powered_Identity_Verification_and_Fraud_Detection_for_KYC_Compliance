@@ -354,7 +354,7 @@ export default function MyUploadsPage() {
                   </h3>
                   <p className="text-slate-300 mb-10 max-w-lg mx-auto text-lg leading-relaxed">
                     Upload your first document and begin the verification
-                    process. We support PDF, JPEG, and PNG files up to 10MB.
+                    process. We support JPEG, and PNG files up to 10MB.
                   </p>
                   <motion.button
                     whileHover={{ scale: 1.05, y: -2 }}
